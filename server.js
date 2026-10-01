@@ -30,6 +30,7 @@ function criarToken() {
 function criarSenha(senha) {
     const salt = crypto.randomBytes(16).toString('hex');
     const hash = crypto.scryptSync(senha, salt, 64).toString('hex');
+
     return `${salt}:${hash}`;
 }
 
@@ -44,7 +45,11 @@ function verificarSenha(senha, senhaHash) {
         const salt = partes[0];
         const hash = partes[1];
 
-        const novoHash = crypto.scryptSync(senha, salt, 64).toString('hex');
+        const novoHash = crypto.scryptSync(
+            senha,
+            salt,
+            64
+        ).toString('hex');
 
         return crypto.timingSafeEqual(
             Buffer.from(hash, 'hex'),
@@ -74,6 +79,8 @@ function autenticar(req, res, next) {
     }
 
     req.usuario = usuario;
+    req.token = token;
+
     next();
 }
 
@@ -95,9 +102,64 @@ function permitir(...perfis) {
     };
 }
 
+function validarCNPJ(cnpj) {
+    const numero = String(cnpj || '').replace(/\D/g, '');
+
+    if (numero.length !== 14) {
+        return false;
+    }
+
+    if (/^(\d)\1{13}$/.test(numero)) {
+        return false;
+    }
+
+    let soma = 0;
+    let peso = 5;
+
+    for (let i = 0; i < 12; i++) {
+        soma += Number(numero[i]) * peso;
+        peso--;
+
+        if (peso === 1) {
+            peso = 9;
+        }
+    }
+
+    let resto = soma % 11;
+    let digito1 = resto < 2 ? 0 : 11 - resto;
+
+    if (Number(numero[12]) !== digito1) {
+        return false;
+    }
+
+    soma = 0;
+    peso = 6;
+
+    for (let i = 0; i < 13; i++) {
+        soma += Number(numero[i]) * peso;
+        peso--;
+
+        if (peso === 1) {
+            peso = 9;
+        }
+    }
+
+    resto = soma % 11;
+    let digito2 = resto < 2 ? 0 : 11 - resto;
+
+    return Number(numero[13]) === digito2;
+}
+
+function numeroConta(prefixo) {
+    return `${prefixo}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+}
+
 connection.connect((err) => {
     if (err) {
-        console.error('Erro ao conectar ao MySQL:', err.message);
+        console.error(
+            'Erro ao conectar ao MySQL:',
+            err.message
+        );
         return;
     }
 
@@ -105,11 +167,15 @@ connection.connect((err) => {
 });
 
 app.get('/', (req, res) => {
-    res.sendFile(path.join(frontendPath, 'index.html'));
+    res.sendFile(
+        path.join(frontendPath, 'index.html')
+    );
 });
 
 app.get('/login', (req, res) => {
-    res.sendFile(path.join(frontendPath, 'login.html'));
+    res.sendFile(
+        path.join(frontendPath, 'login.html')
+    );
 });
 
 
@@ -118,6 +184,7 @@ app.get('/login', (req, res) => {
 ========================= */
 
 app.post('/api/cadastro', (req, res) => {
+
     const {
         nome,
         cpf,
@@ -140,18 +207,20 @@ app.post('/api/cadastro', (req, res) => {
     }
 
     connection.beginTransaction((err) => {
+
         if (err) {
             return res.status(500).json({
                 erro: 'Erro ao iniciar cadastro'
             });
         }
 
-        const numeroConta = `C-${Date.now()}`;
+        const contaNumero = numeroConta('C');
 
         connection.query(
             'INSERT INTO conta (numero) VALUES (?)',
-            [numeroConta],
+            [contaNumero],
             (err, contaResult) => {
+
                 if (err) {
                     return connection.rollback(() => {
                         res.status(500).json({
@@ -174,45 +243,59 @@ app.post('/api/cadastro', (req, res) => {
                         idConta
                     ],
                     (err, clienteResult) => {
+
                         if (err) {
                             return connection.rollback(() => {
                                 res.status(400).json({
-                                    erro: err.code === 'ER_DUP_ENTRY'
-                                        ? 'CPF já cadastrado'
-                                        : 'Erro ao criar cliente'
+                                    erro:
+                                        err.code === 'ER_DUP_ENTRY'
+                                            ? 'CPF já cadastrado'
+                                            : 'Erro ao criar cliente'
                                 });
                             });
                         }
 
-                        const idCliente = clienteResult.insertId;
-                        const senhaHash = criarSenha(senha);
+                        const idCliente =
+                            clienteResult.insertId;
+
+                        const senhaHash =
+                            criarSenha(senha);
 
                         connection.query(
                             `INSERT INTO usuario
                             (login, senha_hash, perfil, id_cliente)
                             VALUES (?, ?, 'CLIENTE', ?)`,
-                            [login, senhaHash, idCliente],
+                            [
+                                login,
+                                senhaHash,
+                                idCliente
+                            ],
                             (err) => {
+
                                 if (err) {
                                     return connection.rollback(() => {
                                         res.status(400).json({
-                                            erro: err.code === 'ER_DUP_ENTRY'
-                                                ? 'Usuário já cadastrado'
-                                                : 'Erro ao criar usuário'
+                                            erro:
+                                                err.code === 'ER_DUP_ENTRY'
+                                                    ? 'Usuário já cadastrado'
+                                                    : 'Erro ao criar usuário'
                                         });
                                     });
                                 }
 
                                 connection.commit((err) => {
+
                                     if (err) {
                                         return connection.rollback(() => {
                                             res.status(500).json({
-                                                erro: 'Erro ao finalizar cadastro'
+                                                erro:
+                                                    'Erro ao finalizar cadastro'
                                             });
                                         });
                                     }
 
-                                    const token = criarToken();
+                                    const token =
+                                        criarToken();
 
                                     const usuario = {
                                         id: idCliente,
@@ -221,7 +304,10 @@ app.post('/api/cadastro', (req, res) => {
                                         id_cliente: idCliente
                                     };
 
-                                    sessoes.set(token, usuario);
+                                    sessoes.set(
+                                        token,
+                                        usuario
+                                    );
 
                                     res.status(201).json({
                                         token,
@@ -243,7 +329,11 @@ app.post('/api/cadastro', (req, res) => {
 ========================= */
 
 app.post('/api/login', (req, res) => {
-    const { login, senha } = req.body;
+
+    const {
+        login,
+        senha
+    } = req.body;
 
     if (!login || !senha) {
         return res.status(400).json({
@@ -260,47 +350,62 @@ app.post('/api/login', (req, res) => {
             u.id_cliente,
             c.nome
         FROM usuario u
-        LEFT JOIN cliente c ON c.id_cliente = u.id_cliente
-        WHERE u.login = ? AND u.ativo = 1
+        LEFT JOIN cliente c
+            ON c.id_cliente = u.id_cliente
+        WHERE u.login = ?
+        AND u.ativo = 1
     `;
 
-    connection.query(sql, [login], (err, results) => {
-        if (err) {
-            return res.status(500).json({
-                erro: 'Erro ao realizar login'
+    connection.query(
+        sql,
+        [login],
+        (err, results) => {
+
+            if (err) {
+                return res.status(500).json({
+                    erro: 'Erro ao realizar login'
+                });
+            }
+
+            if (!results.length) {
+                return res.status(401).json({
+                    erro: 'Usuário ou senha incorretos'
+                });
+            }
+
+            const usuarioBanco = results[0];
+
+            if (
+                !verificarSenha(
+                    senha,
+                    usuarioBanco.senha_hash
+                )
+            ) {
+                return res.status(401).json({
+                    erro: 'Usuário ou senha incorretos'
+                });
+            }
+
+            const token = criarToken();
+
+            const usuario = {
+                id: usuarioBanco.id_usuario,
+                nome:
+                    usuarioBanco.nome ||
+                    usuarioBanco.login,
+                perfil: usuarioBanco.perfil,
+                id_cliente:
+                    usuarioBanco.id_cliente
+            };
+
+            sessoes.set(token, usuario);
+
+            res.json({
+                token,
+                user: usuario
             });
         }
-
-        if (!results.length) {
-            return res.status(401).json({
-                erro: 'Usuário ou senha incorretos'
-            });
-        }
-
-        const usuarioBanco = results[0];
-
-        if (!verificarSenha(senha, usuarioBanco.senha_hash)) {
-            return res.status(401).json({
-                erro: 'Usuário ou senha incorretos'
-            });
-        }
-
-        const token = criarToken();
-
-        const usuario = {
-            id: usuarioBanco.id_usuario,
-            nome: usuarioBanco.nome || usuarioBanco.login,
-            perfil: usuarioBanco.perfil,
-            id_cliente: usuarioBanco.id_cliente
-        };
-
-        sessoes.set(token, usuario);
-
-        res.json({
-            token,
-            user: usuario
-        });
-    });
+    );
 });
 
 
@@ -312,50 +417,73 @@ app.post(
     '/api/senha',
     autenticar,
     (req, res) => {
-        const { atual, nova } = req.body;
+
+        const {
+            atual,
+            nova
+        } = req.body;
 
         if (!atual || !nova) {
             return res.status(400).json({
-                erro: 'Informe a senha atual e a nova senha'
+                erro:
+                    'Informe a senha atual e a nova senha'
             });
         }
 
         if (nova.length < 6) {
             return res.status(400).json({
-                erro: 'A nova senha deve ter no mínimo 6 caracteres'
+                erro:
+                    'A nova senha deve ter no mínimo 6 caracteres'
             });
         }
 
         connection.query(
-            'SELECT senha_hash FROM usuario WHERE id_usuario = ?',
+            `SELECT senha_hash
+             FROM usuario
+             WHERE id_usuario = ?`,
             [req.usuario.id],
             (err, results) => {
+
                 if (err || !results.length) {
                     return res.status(500).json({
                         erro: 'Erro ao buscar usuário'
                     });
                 }
 
-                if (!verificarSenha(atual, results[0].senha_hash)) {
+                if (
+                    !verificarSenha(
+                        atual,
+                        results[0].senha_hash
+                    )
+                ) {
                     return res.status(400).json({
                         erro: 'Senha atual incorreta'
                     });
                 }
 
-                const novaSenha = criarSenha(nova);
+                const novaSenha =
+                    criarSenha(nova);
 
                 connection.query(
-                    'UPDATE usuario SET senha_hash = ? WHERE id_usuario = ?',
-                    [novaSenha, req.usuario.id],
+                    `UPDATE usuario
+                     SET senha_hash = ?
+                     WHERE id_usuario = ?`,
+                    [
+                        novaSenha,
+                        req.usuario.id
+                    ],
                     (err) => {
+
                         if (err) {
                             return res.status(500).json({
-                                erro: 'Erro ao alterar senha'
+                                erro:
+                                    'Erro ao alterar senha'
                             });
                         }
 
                         res.json({
-                            mensagem: 'Senha alterada com sucesso'
+                            mensagem:
+                                'Senha alterada com sucesso'
                         });
                     }
                 );
@@ -374,6 +502,7 @@ app.get(
     autenticar,
     permitir('ADMIN'),
     (req, res) => {
+
         const sql = `
             SELECT
                 u.id_usuario AS id,
@@ -387,15 +516,20 @@ app.get(
             ORDER BY u.id_usuario DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar usuários'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar usuários'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
@@ -404,6 +538,7 @@ app.post(
     autenticar,
     permitir('ADMIN'),
     (req, res) => {
+
         const {
             login,
             senha,
@@ -414,20 +549,20 @@ app.post(
         const perfisValidos = [
             'ADMIN',
             'OPERADOR',
-            'VENDEDOR',
-            'LOJISTA',
             'CLIENTE'
         ];
 
         if (!login || !senha || !perfil) {
             return res.status(400).json({
-                erro: 'Login, senha e perfil são obrigatórios'
+                erro:
+                    'Login, senha e perfil são obrigatórios'
             });
         }
 
         if (senha.length < 6) {
             return res.status(400).json({
-                erro: 'A senha deve ter no mínimo 6 caracteres'
+                erro:
+                    'A senha deve ter no mínimo 6 caracteres'
             });
         }
 
@@ -437,13 +572,18 @@ app.post(
             });
         }
 
-        if (perfil === 'CLIENTE' && !id_cliente) {
+        if (
+            perfil === 'CLIENTE' &&
+            !id_cliente
+        ) {
             return res.status(400).json({
-                erro: 'Selecione o cliente'
+                erro:
+                    'Selecione o cliente'
             });
         }
 
-        const senhaHash = criarSenha(senha);
+        const senhaHash =
+            criarSenha(senha);
 
         connection.query(
             `INSERT INTO usuario
@@ -453,20 +593,26 @@ app.post(
                 login,
                 senhaHash,
                 perfil,
-                id_cliente || null
+                perfil === 'CLIENTE'
+                    ? id_cliente
+                    : null
             ],
             (err, result) => {
+
                 if (err) {
                     return res.status(400).json({
-                        erro: err.code === 'ER_DUP_ENTRY'
-                            ? 'Login já cadastrado'
-                            : 'Erro ao criar usuário'
+                        erro:
+                            err.code === 'ER_DUP_ENTRY'
+                                ? 'Login já cadastrado'
+                                : 'Erro ao criar usuário'
                     });
                 }
 
                 res.status(201).json({
-                    id_usuario: result.insertId,
-                    mensagem: 'Usuário criado com sucesso'
+                    id_usuario:
+                        result.insertId,
+                    mensagem:
+                        'Usuário criado com sucesso'
                 });
             }
         );
@@ -478,21 +624,56 @@ app.put(
     autenticar,
     permitir('ADMIN'),
     (req, res) => {
-        const id = Number(req.params.id);
-        const ativo = Number(req.body.ativo);
+
+        const id =
+            Number(req.params.id);
+
+        const ativo =
+            Number(req.body.ativo) ? 1 : 0;
+
+        if (!id) {
+            return res.status(400).json({
+                erro: 'Usuário inválido'
+            });
+        }
+
+        if (
+            id === Number(req.usuario.id) &&
+            ativo === 0
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Você não pode desativar seu próprio usuário'
+            });
+        }
 
         connection.query(
-            'UPDATE usuario SET ativo = ? WHERE id_usuario = ?',
-            [ativo ? 1 : 0, id],
-            (err) => {
+            `UPDATE usuario
+             SET ativo = ?
+             WHERE id_usuario = ?`,
+            [
+                ativo,
+                id
+            ],
+            (err, result) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao alterar usuário'
+                        erro:
+                            'Erro ao alterar usuário'
+                    });
+                }
+
+                if (!result.affectedRows) {
+                    return res.status(404).json({
+                        erro:
+                            'Usuário não encontrado'
                     });
                 }
 
                 res.json({
-                    mensagem: 'Usuário atualizado com sucesso'
+                    mensagem:
+                        'Usuário atualizado com sucesso'
                 });
             }
         );
@@ -504,15 +685,19 @@ app.put(
    LOGOUT
 ========================= */
 
-app.post('/api/logout', autenticar, (req, res) => {
-    const token = req.headers.authorization.replace('Bearer ', '');
+app.post(
+    '/api/logout',
+    autenticar,
+    (req, res) => {
 
-    sessoes.delete(token);
+        sessoes.delete(req.token);
 
-    res.json({
-        mensagem: 'Sessão encerrada'
-    });
-});
+        res.json({
+            mensagem:
+                'Sessão encerrada'
+        });
+    }
+);
 
 
 /* =========================
@@ -522,8 +707,12 @@ app.post('/api/logout', autenticar, (req, res) => {
 app.get(
     '/api/clientes',
     autenticar,
-    permitir('ADMIN', 'OPERADOR', 'VENDEDOR'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const sql = `
             SELECT
                 c.id_cliente AS id,
@@ -534,27 +723,37 @@ app.get(
                 c.id_conta,
                 ct.numero AS conta
             FROM cliente c
-            LEFT JOIN conta ct ON ct.id_conta = c.id_conta
+            LEFT JOIN conta ct
+                ON ct.id_conta = c.id_conta
             ORDER BY c.id_cliente DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar clientes'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar clientes'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
 app.post(
     '/api/clientes',
     autenticar,
-    permitir('ADMIN', 'OPERADOR', 'VENDEDOR'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const {
             nome,
             cpf,
@@ -565,11 +764,13 @@ app.post(
 
         if (!nome || !cpf) {
             return res.status(400).json({
-                erro: 'Nome e CPF são obrigatórios'
+                erro:
+                    'Nome e CPF são obrigatórios'
             });
         }
 
         function inserirCliente(contaId) {
+
             connection.query(
                 `INSERT INTO cliente
                 (nome, cpf, email, telefone, id_conta)
@@ -582,17 +783,21 @@ app.post(
                     contaId
                 ],
                 (err, result) => {
+
                     if (err) {
                         return res.status(400).json({
-                            erro: err.code === 'ER_DUP_ENTRY'
-                                ? 'CPF já cadastrado'
-                                : 'Erro ao cadastrar cliente'
+                            erro:
+                                err.code === 'ER_DUP_ENTRY'
+                                    ? 'CPF já cadastrado'
+                                    : 'Erro ao cadastrar cliente'
                         });
                     }
 
                     res.status(201).json({
-                        id_cliente: result.insertId,
-                        mensagem: 'Cliente cadastrado com sucesso'
+                        id_cliente:
+                            result.insertId,
+                        mensagem:
+                            'Cliente cadastrado com sucesso'
                     });
                 }
             );
@@ -602,19 +807,21 @@ app.post(
             return inserirCliente(id_conta);
         }
 
-        const numeroConta = `C-${Date.now()}`;
-
         connection.query(
             'INSERT INTO conta (numero) VALUES (?)',
-            [numeroConta],
+            [numeroConta('C')],
             (err, result) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao criar conta do cliente'
+                        erro:
+                            'Erro ao criar conta do cliente'
                     });
                 }
 
-                inserirCliente(result.insertId);
+                inserirCliente(
+                    result.insertId
+                );
             }
         );
     }
@@ -628,8 +835,12 @@ app.post(
 app.get(
     '/api/lojas',
     autenticar,
-    permitir('ADMIN', 'LOJISTA'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const sql = `
             SELECT
                 l.id_loja AS id,
@@ -639,27 +850,34 @@ app.get(
                 l.id_conta,
                 c.numero AS conta
             FROM loja l
-            LEFT JOIN conta c ON c.id_conta = l.id_conta
+            LEFT JOIN conta c
+                ON c.id_conta = l.id_conta
             ORDER BY l.id_loja DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar lojas'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar lojas'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
 app.post(
     '/api/lojas',
     autenticar,
-    permitir('ADMIN', 'LOJISTA'),
+    permitir('ADMIN'),
     (req, res) => {
+
         const {
             nome,
             tipo,
@@ -669,11 +887,28 @@ app.post(
 
         if (!nome) {
             return res.status(400).json({
-                erro: 'Nome da loja é obrigatório'
+                erro:
+                    'Nome da loja é obrigatório'
+            });
+        }
+
+        const tipoValido = [
+            'Física',
+            'Online'
+        ];
+
+        if (
+            tipo &&
+            !tipoValido.includes(tipo)
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Tipo de loja inválido'
             });
         }
 
         function inserirLoja(contaId) {
+
             connection.query(
                 `INSERT INTO loja
                 (nome, tipo, endereco, id_conta)
@@ -685,15 +920,19 @@ app.post(
                     contaId
                 ],
                 (err, result) => {
+
                     if (err) {
                         return res.status(400).json({
-                            erro: 'Erro ao cadastrar loja'
+                            erro:
+                                'Erro ao cadastrar loja'
                         });
                     }
 
                     res.status(201).json({
-                        id_loja: result.insertId,
-                        mensagem: 'Loja cadastrada com sucesso'
+                        id_loja:
+                            result.insertId,
+                        mensagem:
+                            'Loja cadastrada com sucesso'
                     });
                 }
             );
@@ -703,19 +942,21 @@ app.post(
             return inserirLoja(id_conta);
         }
 
-        const numeroConta = `L-${Date.now()}`;
-
         connection.query(
             'INSERT INTO conta (numero) VALUES (?)',
-            [numeroConta],
+            [numeroConta('L')],
             (err, result) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao criar conta da loja'
+                        erro:
+                            'Erro ao criar conta da loja'
                     });
                 }
 
-                inserirLoja(result.insertId);
+                inserirLoja(
+                    result.insertId
+                );
             }
         );
     }
@@ -729,8 +970,9 @@ app.post(
 app.get(
     '/api/categorias',
     autenticar,
-    permitir('ADMIN', 'LOJISTA'),
+    permitir('ADMIN'),
     (req, res) => {
+
         connection.query(
             `SELECT
                 id_categoria AS id,
@@ -739,9 +981,11 @@ app.get(
              FROM categoria
              ORDER BY id_categoria DESC`,
             (err, results) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao buscar categorias'
+                        erro:
+                            'Erro ao buscar categorias'
                     });
                 }
 
@@ -754,8 +998,9 @@ app.get(
 app.post(
     '/api/categorias',
     autenticar,
-    permitir('ADMIN', 'LOJISTA'),
+    permitir('ADMIN'),
     (req, res) => {
+
         const {
             nome,
             descricao
@@ -768,18 +1013,27 @@ app.post(
         }
 
         connection.query(
-            'INSERT INTO categoria (nome, descricao) VALUES (?, ?)',
-            [nome, descricao || null],
+            `INSERT INTO categoria
+            (nome, descricao)
+            VALUES (?, ?)`,
+            [
+                nome,
+                descricao || null
+            ],
             (err, result) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao cadastrar categoria'
+                        erro:
+                            'Erro ao cadastrar categoria'
                     });
                 }
 
                 res.status(201).json({
-                    id_categoria: result.insertId,
-                    mensagem: 'Categoria cadastrada com sucesso'
+                    id_categoria:
+                        result.insertId,
+                    mensagem:
+                        'Categoria cadastrada com sucesso'
                 });
             }
         );
@@ -794,8 +1048,12 @@ app.post(
 app.get(
     '/api/fornecedores',
     autenticar,
-    permitir('ADMIN'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         connection.query(
             `SELECT
                 id_fornecedor AS id,
@@ -806,9 +1064,11 @@ app.get(
              FROM fornecedor
              ORDER BY id_fornecedor DESC`,
             (err, results) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao buscar fornecedores'
+                        erro:
+                            'Erro ao buscar fornecedores'
                     });
                 }
 
@@ -823,6 +1083,7 @@ app.post(
     autenticar,
     permitir('ADMIN'),
     (req, res) => {
+
         const {
             razao_social,
             cnpj,
@@ -832,9 +1093,20 @@ app.post(
 
         if (!razao_social || !cnpj) {
             return res.status(400).json({
-                erro: 'Razão social e CNPJ são obrigatórios'
+                erro:
+                    'Razão social e CNPJ são obrigatórios'
             });
         }
+
+        if (!validarCNPJ(cnpj)) {
+            return res.status(400).json({
+                erro:
+                    'CNPJ inválido'
+            });
+        }
+
+        const cnpjLimpo =
+            String(cnpj).replace(/\D/g, '');
 
         connection.query(
             `INSERT INTO fornecedor
@@ -842,22 +1114,26 @@ app.post(
             VALUES (?, ?, ?, ?)`,
             [
                 razao_social,
-                cnpj,
+                cnpjLimpo,
                 email || null,
                 telefone || null
             ],
             (err, result) => {
+
                 if (err) {
                     return res.status(400).json({
-                        erro: err.code === 'ER_DUP_ENTRY'
-                            ? 'CNPJ já cadastrado'
-                            : 'Erro ao cadastrar fornecedor'
+                        erro:
+                            err.code === 'ER_DUP_ENTRY'
+                                ? 'CNPJ já cadastrado'
+                                : 'Erro ao cadastrar fornecedor'
                     });
                 }
 
                 res.status(201).json({
-                    id_fornecedor: result.insertId,
-                    mensagem: 'Fornecedor cadastrado com sucesso'
+                    id_fornecedor:
+                        result.insertId,
+                    mensagem:
+                        'Fornecedor cadastrado com sucesso'
                 });
             }
         );
@@ -872,8 +1148,8 @@ app.post(
 app.get(
     '/api/produtos',
     autenticar,
-    permitir('ADMIN', 'OPERADOR', 'VENDEDOR', 'LOJISTA', 'CLIENTE'),
     (req, res) => {
+
         const sql = `
             SELECT
                 p.id_produto AS id,
@@ -885,15 +1161,22 @@ app.get(
                 p.id_loja AS loja,
                 c.nome AS categoria_nome,
                 l.nome AS loja_nome,
-                COALESCE(SUM(e.quantidade), 0) AS estoque,
+                COALESCE(
+                    SUM(e.quantidade),
+                    0
+                ) AS estoque,
                 MAX(e.id_fornecedor) AS fornecedor
             FROM produto p
+
             LEFT JOIN categoria c
                 ON c.id_categoria = p.id_categoria
+
             LEFT JOIN loja l
                 ON l.id_loja = p.id_loja
+
             LEFT JOIN estoque e
                 ON e.id_produto = p.id_produto
+
             GROUP BY
                 p.id_produto,
                 p.nome,
@@ -904,26 +1187,33 @@ app.get(
                 p.id_loja,
                 c.nome,
                 l.nome
+
             ORDER BY p.id_produto DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar produtos'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar produtos'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
 app.post(
     '/api/produtos',
     autenticar,
-    permitir('ADMIN', 'LOJISTA'),
+    permitir('ADMIN'),
     (req, res) => {
+
         const {
             nome,
             tendencia,
@@ -935,91 +1225,231 @@ app.post(
             estoque
         } = req.body;
 
-        if (!nome || preco === undefined || !categoria || !loja) {
+        if (
+            !nome ||
+            preco === undefined ||
+            !categoria ||
+            !loja
+        ) {
             return res.status(400).json({
-                erro: 'Preencha os campos obrigatórios'
+                erro:
+                    'Preencha os campos obrigatórios'
+            });
+        }
+
+        const precoNumero =
+            Number(preco);
+
+        if (
+            Number.isNaN(precoNumero) ||
+            precoNumero < 0
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Preço inválido'
+            });
+        }
+
+        if (
+            estoque !== undefined &&
+            Number(estoque) < 0
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Quantidade de estoque inválida'
             });
         }
 
         connection.beginTransaction((err) => {
+
             if (err) {
                 return res.status(500).json({
-                    erro: 'Erro ao iniciar cadastro'
+                    erro:
+                        'Erro ao iniciar cadastro'
                 });
             }
 
             connection.query(
-                `INSERT INTO produto
-                (nome, tendencia, novidade, preco, id_categoria, id_loja)
-                VALUES (?, ?, ?, ?, ?, ?)`,
-                [
-                    nome,
-                    tendencia ? 1 : 0,
-                    novidade ? 1 : 0,
-                    preco,
-                    categoria,
-                    loja
-                ],
-                (err, result) => {
+                `SELECT id_categoria
+                 FROM categoria
+                 WHERE id_categoria = ?`,
+                [categoria],
+                (err, categorias) => {
+
                     if (err) {
                         return connection.rollback(() => {
-                            res.status(400).json({
-                                erro: 'Erro ao cadastrar produto'
+                            res.status(500).json({
+                                erro:
+                                    'Erro ao validar categoria'
                             });
                         });
                     }
 
-                    const idProduto = result.insertId;
-
-                    if (!fornecedor || estoque === undefined) {
-                        return connection.commit((err) => {
-                            if (err) {
-                                return connection.rollback(() => {
-                                    res.status(500).json({
-                                        erro: 'Erro ao finalizar cadastro'
-                                    });
-                                });
-                            }
-
-                            res.status(201).json({
-                                id_produto: idProduto,
-                                mensagem: 'Produto cadastrado com sucesso'
+                    if (!categorias.length) {
+                        return connection.rollback(() => {
+                            res.status(400).json({
+                                erro:
+                                    'Categoria não encontrada'
                             });
                         });
                     }
 
                     connection.query(
-                        `INSERT INTO estoque
-                        (id_produto, id_fornecedor, quantidade)
-                        VALUES (?, ?, ?)`,
-                        [
-                            idProduto,
-                            fornecedor,
-                            Number(estoque) || 0
-                        ],
-                        (err) => {
+                        `SELECT id_loja
+                         FROM loja
+                         WHERE id_loja = ?`,
+                        [loja],
+                        (err, lojas) => {
+
                             if (err) {
                                 return connection.rollback(() => {
-                                    res.status(400).json({
-                                        erro: 'Produto criado, mas houve erro ao cadastrar estoque'
+                                    res.status(500).json({
+                                        erro:
+                                            'Erro ao validar loja'
                                     });
                                 });
                             }
 
-                            connection.commit((err) => {
-                                if (err) {
-                                    return connection.rollback(() => {
-                                        res.status(500).json({
-                                            erro: 'Erro ao finalizar cadastro'
-                                        });
+                            if (!lojas.length) {
+                                return connection.rollback(() => {
+                                    res.status(400).json({
+                                        erro:
+                                            'Loja não encontrada'
                                     });
-                                }
-
-                                res.status(201).json({
-                                    id_produto: idProduto,
-                                    mensagem: 'Produto cadastrado com sucesso'
                                 });
-                            });
+                            }
+
+                            connection.query(
+                                `INSERT INTO produto
+                                (
+                                    nome,
+                                    tendencia,
+                                    novidade,
+                                    preco,
+                                    id_categoria,
+                                    id_loja
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?)`,
+                                [
+                                    nome,
+                                    tendencia ? 1 : 0,
+                                    novidade ? 1 : 0,
+                                    precoNumero,
+                                    categoria,
+                                    loja
+                                ],
+                                (err, result) => {
+
+                                    if (err) {
+                                        return connection.rollback(() => {
+                                            res.status(400).json({
+                                                erro:
+                                                    'Erro ao cadastrar produto'
+                                            });
+                                        });
+                                    }
+
+                                    const idProduto =
+                                        result.insertId;
+
+                                    if (
+                                        !fornecedor ||
+                                        estoque === undefined ||
+                                        Number(estoque) === 0
+                                    ) {
+                                        return connection.commit((err) => {
+
+                                            if (err) {
+                                                return connection.rollback(() => {
+                                                    res.status(500).json({
+                                                        erro:
+                                                            'Erro ao finalizar cadastro'
+                                                    });
+                                                });
+                                            }
+
+                                            res.status(201).json({
+                                                id_produto:
+                                                    idProduto,
+                                                mensagem:
+                                                    'Produto cadastrado com sucesso'
+                                            });
+                                        });
+                                    }
+
+                                    connection.query(
+                                        `SELECT id_fornecedor
+                                         FROM fornecedor
+                                         WHERE id_fornecedor = ?`,
+                                        [fornecedor],
+                                        (err, fornecedores) => {
+
+                                            if (err) {
+                                                return connection.rollback(() => {
+                                                    res.status(500).json({
+                                                        erro:
+                                                            'Erro ao validar fornecedor'
+                                                    });
+                                                });
+                                            }
+
+                                            if (!fornecedores.length) {
+                                                return connection.rollback(() => {
+                                                    res.status(400).json({
+                                                        erro:
+                                                            'Fornecedor não encontrado'
+                                                    });
+                                                });
+                                            }
+
+                                            connection.query(
+                                                `INSERT INTO estoque
+                                                (
+                                                    id_produto,
+                                                    id_fornecedor,
+                                                    quantidade
+                                                )
+                                                VALUES (?, ?, ?)`,
+                                                [
+                                                    idProduto,
+                                                    fornecedor,
+                                                    Number(estoque)
+                                                ],
+                                                (err) => {
+
+                                                    if (err) {
+                                                        return connection.rollback(() => {
+                                                            res.status(400).json({
+                                                                erro:
+                                                                    'Erro ao cadastrar estoque'
+                                                            });
+                                                        });
+                                                    }
+
+                                                    connection.commit((err) => {
+
+                                                        if (err) {
+                                                            return connection.rollback(() => {
+                                                                res.status(500).json({
+                                                                    erro:
+                                                                        'Erro ao finalizar cadastro'
+                                                                });
+                                                            });
+                                                        }
+
+                                                        res.status(201).json({
+                                                            id_produto:
+                                                                idProduto,
+                                                            mensagem:
+                                                                'Produto cadastrado com sucesso'
+                                                        });
+                                                    });
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
                         }
                     );
                 }
@@ -1036,8 +1466,12 @@ app.post(
 app.get(
     '/api/estoque',
     autenticar,
-    permitir('ADMIN', 'OPERADOR', 'LOJISTA'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const sql = `
             SELECT
                 e.id_estoque AS id,
@@ -1047,62 +1481,144 @@ app.get(
                 p.nome AS produto_nome,
                 f.razao_social AS fornecedor_nome
             FROM estoque e
-            LEFT JOIN produto p
+            INNER JOIN produto p
                 ON p.id_produto = e.id_produto
-            LEFT JOIN fornecedor f
+            INNER JOIN fornecedor f
                 ON f.id_fornecedor = e.id_fornecedor
             ORDER BY e.id_estoque DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar estoque'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar estoque'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
 app.post(
     '/api/estoque',
     autenticar,
-    permitir('ADMIN', 'OPERADOR', 'LOJISTA'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const {
             produto,
             fornecedor,
             quantidade
         } = req.body;
 
-        if (!produto || !fornecedor || quantidade === undefined) {
+        if (
+            !produto ||
+            !fornecedor ||
+            quantidade === undefined
+        ) {
             return res.status(400).json({
-                erro: 'Preencha os campos obrigatórios'
+                erro:
+                    'Preencha os campos obrigatórios'
+            });
+        }
+
+        const qtd =
+            Number(quantidade);
+
+        if (
+            Number.isNaN(qtd) ||
+            qtd <= 0 ||
+            !Number.isInteger(qtd)
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Quantidade deve ser um número inteiro maior que zero'
             });
         }
 
         connection.query(
-            `INSERT INTO estoque
-            (id_produto, id_fornecedor, quantidade)
-            VALUES (?, ?, ?)`,
-            [
-                produto,
-                fornecedor,
-                quantidade
-            ],
-            (err, result) => {
+            `SELECT id_produto
+             FROM produto
+             WHERE id_produto = ?`,
+            [produto],
+            (err, produtos) => {
+
                 if (err) {
-                    return res.status(400).json({
-                        erro: 'Erro ao cadastrar estoque'
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao validar produto'
                     });
                 }
 
-                res.status(201).json({
-                    id_estoque: result.insertId,
-                    mensagem: 'Estoque cadastrado com sucesso'
-                });
+                if (!produtos.length) {
+                    return res.status(400).json({
+                        erro:
+                            'Produto não encontrado'
+                    });
+                }
+
+                connection.query(
+                    `SELECT id_fornecedor
+                     FROM fornecedor
+                     WHERE id_fornecedor = ?`,
+                    [fornecedor],
+                    (err, fornecedores) => {
+
+                        if (err) {
+                            return res.status(500).json({
+                                erro:
+                                    'Erro ao validar fornecedor'
+                            });
+                        }
+
+                        if (!fornecedores.length) {
+                            return res.status(400).json({
+                                erro:
+                                    'Fornecedor não encontrado'
+                            });
+                        }
+
+                        connection.query(
+                            `INSERT INTO estoque
+                            (
+                                id_produto,
+                                id_fornecedor,
+                                quantidade
+                            )
+                            VALUES (?, ?, ?)`,
+                            [
+                                produto,
+                                fornecedor,
+                                qtd
+                            ],
+                            (err, result) => {
+
+                                if (err) {
+                                    return res.status(400).json({
+                                        erro:
+                                            'Erro ao cadastrar estoque'
+                                    });
+                                }
+
+                                res.status(201).json({
+                                    id_estoque:
+                                        result.insertId,
+                                    mensagem:
+                                        'Estoque cadastrado com sucesso'
+                                });
+                            }
+                        );
+                    }
+                );
             }
         );
     }
@@ -1116,8 +1632,12 @@ app.post(
 app.get(
     '/api/vendas',
     autenticar,
-    permitir('ADMIN', 'OPERADOR', 'VENDEDOR', 'LOJISTA'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const sql = `
             SELECT
                 v.id_venda AS id,
@@ -1130,30 +1650,44 @@ app.get(
                 c.nome AS cliente_nome,
                 l.nome AS loja_nome
             FROM venda v
-            LEFT JOIN cliente c
+            INNER JOIN cliente c
                 ON c.id_cliente = v.id_cliente
-            LEFT JOIN loja l
+            INNER JOIN loja l
                 ON l.id_loja = v.id_loja
             ORDER BY v.id_venda DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar vendas'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar vendas'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
+
+
+/* =========================
+   CRIAR VENDA
+========================= */
 
 app.post(
     '/api/vendas',
     autenticar,
-    permitir('ADMIN', 'OPERADOR', 'VENDEDOR', 'LOJISTA'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const {
             cliente,
             loja,
@@ -1163,239 +1697,586 @@ app.post(
             itens
         } = req.body;
 
-        if (!cliente || !loja || !canal) {
+        const idCliente =
+            Number(cliente);
+
+        const idLoja =
+            Number(loja);
+
+        if (
+            !idCliente ||
+            !idLoja ||
+            !canal
+        ) {
             return res.status(400).json({
-                erro: 'Preencha os campos obrigatórios'
+                erro:
+                    'Cliente, loja e canal são obrigatórios'
             });
         }
 
-        if (!Array.isArray(itens) || !itens.length) {
+        if (
+            !Array.isArray(itens) ||
+            !itens.length
+        ) {
             return res.status(400).json({
-                erro: 'Adicione pelo menos um produto'
+                erro:
+                    'Adicione pelo menos um produto'
+            });
+        }
+
+        const itensAgrupados = new Map();
+
+        for (const item of itens) {
+
+            const idProduto =
+                Number(item.produto);
+
+            const quantidade =
+                Number(item.quantidade);
+
+            if (
+                !idProduto ||
+                !Number.isInteger(quantidade) ||
+                quantidade <= 0
+            ) {
+                return res.status(400).json({
+                    erro:
+                        'Produto ou quantidade inválida'
+                });
+            }
+
+            const atual =
+                itensAgrupados.get(idProduto) || 0;
+
+            itensAgrupados.set(
+                idProduto,
+                atual + quantidade
+            );
+        }
+
+        let pagamentoInicial =
+            valorPago === undefined ||
+            valorPago === null ||
+            valorPago === ''
+                ? 0
+                : Number(valorPago);
+
+        if (
+            Number.isNaN(pagamentoInicial) ||
+            pagamentoInicial < 0
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Valor de pagamento inválido'
+            });
+        }
+
+        if (
+            pagamentoInicial > 0 &&
+            !forma
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Informe a forma de pagamento'
+            });
+        }
+
+        const formasValidas = [
+            'PIX',
+            'Cartão',
+            'Boleto'
+        ];
+
+        if (
+            pagamentoInicial > 0 &&
+            !formasValidas.includes(forma)
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Forma de pagamento inválida'
             });
         }
 
         connection.beginTransaction((err) => {
+
             if (err) {
                 return res.status(500).json({
-                    erro: 'Erro ao iniciar venda'
+                    erro:
+                        'Erro ao iniciar venda'
                 });
             }
 
-            const ids = itens.map(item => Number(item.produto));
-
             connection.query(
-                `SELECT
-                    p.id_produto,
-                    p.preco,
-                    COALESCE(SUM(e.quantidade), 0) AS estoque,
-                    MIN(e.id_estoque) AS id_estoque
-                 FROM produto p
-                 LEFT JOIN estoque e
-                    ON e.id_produto = p.id_produto
-                 WHERE p.id_produto IN (?)
-                 GROUP BY p.id_produto, p.preco`,
-                [ids],
-                (err, produtosBanco) => {
+                `SELECT id_cliente
+                 FROM cliente
+                 WHERE id_cliente = ?`,
+                [idCliente],
+                (err, clientes) => {
+
                     if (err) {
                         return connection.rollback(() => {
                             res.status(500).json({
-                                erro: 'Erro ao consultar produtos'
+                                erro:
+                                    'Erro ao validar cliente'
                             });
                         });
                     }
 
-                    let total = 0;
-                    const itensVenda = [];
-
-                    for (const item of itens) {
-                        const produto = produtosBanco.find(
-                            p => Number(p.id_produto) === Number(item.produto)
-                        );
-
-                        const quantidade = Number(item.quantidade);
-
-                        if (!produto) {
-                            return connection.rollback(() => {
-                                res.status(400).json({
-                                    erro: 'Produto não encontrado'
-                                });
+                    if (!clientes.length) {
+                        return connection.rollback(() => {
+                            res.status(400).json({
+                                erro:
+                                    'Cliente não encontrado'
                             });
-                        }
-
-                        if (quantidade <= 0) {
-                            return connection.rollback(() => {
-                                res.status(400).json({
-                                    erro: 'Quantidade inválida'
-                                });
-                            });
-                        }
-
-                        if (Number(produto.estoque) < quantidade) {
-                            return connection.rollback(() => {
-                                res.status(400).json({
-                                    erro: `Estoque insuficiente para o produto`
-                                });
-                            });
-                        }
-
-                        const subtotal =
-                            Number(produto.preco) * quantidade;
-
-                        total += subtotal;
-
-                        itensVenda.push({
-                            produto: produto.id_produto,
-                            estoque: produto.id_estoque,
-                            quantidade,
-                            preco: produto.preco
                         });
                     }
 
                     connection.query(
-                        `INSERT INTO venda
-                        (valor_total, canal, status, id_cliente, id_loja)
-                        VALUES (?, ?, 'ABERTA', ?, ?)`,
-                        [
-                            total,
-                            canal,
-                            cliente,
-                            loja
-                        ],
-                        (err, vendaResult) => {
+                        `SELECT id_loja
+                         FROM loja
+                         WHERE id_loja = ?`,
+                        [idLoja],
+                        (err, lojas) => {
+
                             if (err) {
                                 return connection.rollback(() => {
-                                    res.status(400).json({
-                                        erro: 'Erro ao cadastrar venda'
+                                    res.status(500).json({
+                                        erro:
+                                            'Erro ao validar loja'
                                     });
                                 });
                             }
 
-                            const idVenda = vendaResult.insertId;
-
-                            let processados = 0;
-
-                            function finalizar() {
-                                const pago = Number(valorPago || 0);
-                                const status =
-                                    pago >= total
-                                        ? 'CONCLUIDO'
-                                        : 'ABERTA';
-
-                                connection.query(
-                                    `UPDATE venda
-                                     SET status = ?
-                                     WHERE id_venda = ?`,
-                                    [status, idVenda],
-                                    (err) => {
-                                        if (err) {
-                                            return connection.rollback(() => {
-                                                res.status(500).json({
-                                                    erro: 'Erro ao atualizar venda'
-                                                });
-                                            });
-                                        }
-
-                                        if (pago > 0 && forma) {
-                                            connection.query(
-                                                `INSERT INTO pagamento
-                                                (id_venda, forma, valor, status)
-                                                VALUES (?, ?, ?, 'CONCLUIDO')`,
-                                                [
-                                                    idVenda,
-                                                    forma,
-                                                    Math.min(pago, total)
-                                                ],
-                                                (err) => {
-                                                    if (err) {
-                                                        return connection.rollback(() => {
-                                                            res.status(500).json({
-                                                                erro: 'Erro ao registrar pagamento'
-                                                            });
-                                                        });
-                                                    }
-
-                                                    concluir();
-                                                }
-                                            );
-                                        } else {
-                                            concluir();
-                                        }
-                                    }
-                                );
+                            if (!lojas.length) {
+                                return connection.rollback(() => {
+                                    res.status(400).json({
+                                        erro:
+                                            'Loja não encontrada'
+                                    });
+                                });
                             }
 
-                            function concluir() {
-                                connection.commit((err) => {
+                            const idsProdutos =
+                                [...itensAgrupados.keys()];
+
+                            connection.query(
+                                `SELECT
+                                    id_produto,
+                                    preco
+                                 FROM produto
+                                 WHERE id_produto IN (?)`,
+                                [idsProdutos],
+                                (err, produtos) => {
+
                                     if (err) {
                                         return connection.rollback(() => {
                                             res.status(500).json({
-                                                erro: 'Erro ao finalizar venda'
+                                                erro:
+                                                    'Erro ao consultar produtos'
                                             });
                                         });
                                     }
 
-                                    res.status(201).json({
-                                        id: idVenda,
-                                        id_venda: idVenda,
-                                        total,
-                                        mensagem: 'Venda realizada com sucesso'
-                                    });
-                                });
-                            }
-
-                            if (!itensVenda.length) {
-                                return finalizar();
-                            }
-
-                            itensVenda.forEach(item => {
-                                connection.query(
-                                    `INSERT INTO item_venda
-                                    (id_venda, id_produto, id_estoque, quantidade, preco_unitario)
-                                    VALUES (?, ?, ?, ?, ?)`,
-                                    [
-                                        idVenda,
-                                        item.produto,
-                                        item.estoque,
-                                        item.quantidade,
-                                        item.preco
-                                    ],
-                                    (err) => {
-                                        if (err) {
-                                            return connection.rollback(() => {
-                                                res.status(500).json({
-                                                    erro: 'Erro ao registrar item da venda'
-                                                });
+                                    if (
+                                        produtos.length !==
+                                        idsProdutos.length
+                                    ) {
+                                        return connection.rollback(() => {
+                                            res.status(400).json({
+                                                erro:
+                                                    'Um ou mais produtos não foram encontrados'
                                             });
-                                        }
+                                        });
+                                    }
 
-                                        connection.query(
-                                            `UPDATE estoque
-                                             SET quantidade = quantidade - ?
-                                             WHERE id_estoque = ?`,
-                                            [
-                                                item.quantidade,
-                                                item.estoque
-                                            ],
-                                            (err) => {
-                                                if (err) {
+                                    const mapaProdutos =
+                                        new Map();
+
+                                    produtos.forEach(produto => {
+                                        mapaProdutos.set(
+                                            Number(produto.id_produto),
+                                            produto
+                                        );
+                                    });
+
+                                    connection.query(
+                                        `SELECT
+                                            id_estoque,
+                                            id_produto,
+                                            quantidade
+                                         FROM estoque
+                                         WHERE id_produto IN (?)
+                                         AND quantidade > 0
+                                         ORDER BY id_estoque
+                                         FOR UPDATE`,
+                                        [idsProdutos],
+                                        (err, estoques) => {
+
+                                            if (err) {
+                                                return connection.rollback(() => {
+                                                    res.status(500).json({
+                                                        erro:
+                                                            'Erro ao consultar estoque'
+                                                    });
+                                                });
+                                            }
+
+                                            const estoquePorProduto =
+                                                new Map();
+
+                                            estoques.forEach(estoque => {
+
+                                                const id =
+                                                    Number(
+                                                        estoque.id_produto
+                                                    );
+
+                                                if (
+                                                    !estoquePorProduto.has(id)
+                                                ) {
+                                                    estoquePorProduto.set(
+                                                        id,
+                                                        []
+                                                    );
+                                                }
+
+                                                estoquePorProduto
+                                                    .get(id)
+                                                    .push(estoque);
+                                            });
+
+                                            const itensVenda = [];
+                                            let total = 0;
+
+                                            for (
+                                                const [
+                                                    idProduto,
+                                                    quantidadeSolicitada
+                                                ]
+                                                of itensAgrupados
+                                            ) {
+
+                                                const produto =
+                                                    mapaProdutos.get(
+                                                        idProduto
+                                                    );
+
+                                                const lotes =
+                                                    estoquePorProduto.get(
+                                                        idProduto
+                                                    ) || [];
+
+                                                let restante =
+                                                    quantidadeSolicitada;
+
+                                                const estoqueTotal =
+                                                    lotes.reduce(
+                                                        (
+                                                            soma,
+                                                            lote
+                                                        ) =>
+                                                            soma +
+                                                            Number(
+                                                                lote.quantidade
+                                                            ),
+                                                        0
+                                                    );
+
+                                                if (
+                                                    estoqueTotal <
+                                                    quantidadeSolicitada
+                                                ) {
                                                     return connection.rollback(() => {
-                                                        res.status(500).json({
-                                                            erro: 'Erro ao atualizar estoque'
+                                                        res.status(400).json({
+                                                            erro:
+                                                                `Estoque insuficiente para o produto ${idProduto}`
                                                         });
                                                     });
                                                 }
 
-                                                processados++;
+                                                for (
+                                                    const lote
+                                                    of lotes
+                                                ) {
 
-                                                if (processados === itensVenda.length) {
-                                                    finalizar();
+                                                    if (
+                                                        restante <= 0
+                                                    ) {
+                                                        break;
+                                                    }
+
+                                                    const disponivel =
+                                                        Number(
+                                                            lote.quantidade
+                                                        );
+
+                                                    const usado =
+                                                        Math.min(
+                                                            restante,
+                                                            disponivel
+                                                        );
+
+                                                    itensVenda.push({
+                                                        produto:
+                                                            idProduto,
+                                                        estoque:
+                                                            lote.id_estoque,
+                                                        quantidade:
+                                                            usado,
+                                                        preco:
+                                                            Number(
+                                                                produto.preco
+                                                            )
+                                                    });
+
+                                                    restante -= usado;
+
+                                                    total +=
+                                                        Number(
+                                                            produto.preco
+                                                        ) * usado;
                                                 }
                                             }
-                                        );
-                                    }
-                                );
-                            });
+
+                                            if (
+                                                pagamentoInicial >
+                                                total
+                                            ) {
+                                                return connection.rollback(() => {
+                                                    res.status(400).json({
+                                                        erro:
+                                                            'O pagamento não pode ser maior que o total da venda'
+                                                    });
+                                                });
+                                            }
+
+                                            connection.query(
+                                                `INSERT INTO venda
+                                                (
+                                                    valor_total,
+                                                    canal,
+                                                    status,
+                                                    id_cliente,
+                                                    id_loja
+                                                )
+                                                VALUES (?, ?, 'ABERTA', ?, ?)`,
+                                                [
+                                                    total,
+                                                    canal,
+                                                    idCliente,
+                                                    idLoja
+                                                ],
+                                                (err, vendaResult) => {
+
+                                                    if (err) {
+                                                        return connection.rollback(() => {
+                                                            res.status(400).json({
+                                                                erro:
+                                                                    'Erro ao cadastrar venda'
+                                                            });
+                                                        });
+                                                    }
+
+                                                    const idVenda =
+                                                        vendaResult.insertId;
+
+                                                    let concluidos = 0;
+
+                                                    function erroItem(mensagem) {
+                                                        connection.rollback(() => {
+                                                            res.status(500).json({
+                                                                erro:
+                                                                    mensagem
+                                                            });
+                                                        });
+                                                    }
+
+                                                    for (
+                                                        const item
+                                                        of itensVenda
+                                                    ) {
+
+                                                        connection.query(
+                                                            `INSERT INTO item_venda
+                                                            (
+                                                                id_venda,
+                                                                id_produto,
+                                                                id_estoque,
+                                                                quantidade,
+                                                                preco_unitario
+                                                            )
+                                                            VALUES (?, ?, ?, ?, ?)`,
+                                                            [
+                                                                idVenda,
+                                                                item.produto,
+                                                                item.estoque,
+                                                                item.quantidade,
+                                                                item.preco
+                                                            ],
+                                                            (err) => {
+
+                                                                if (err) {
+                                                                    return erroItem(
+                                                                        'Erro ao registrar item da venda'
+                                                                    );
+                                                                }
+
+                                                                connection.query(
+                                                                    `UPDATE estoque
+                                                                     SET quantidade =
+                                                                         quantidade - ?
+                                                                     WHERE id_estoque = ?
+                                                                     AND quantidade >= ?`,
+                                                                    [
+                                                                        item.quantidade,
+                                                                        item.estoque,
+                                                                        item.quantidade
+                                                                    ],
+                                                                    (err, updateResult) => {
+
+                                                                        if (err) {
+                                                                            return erroItem(
+                                                                                'Erro ao atualizar estoque'
+                                                                            );
+                                                                        }
+
+                                                                        if (
+                                                                            !updateResult.affectedRows
+                                                                        ) {
+                                                                            return erroItem(
+                                                                                'Estoque insuficiente'
+                                                                            );
+                                                                        }
+
+                                                                        concluidos++;
+
+                                                                        if (
+                                                                            concluidos ===
+                                                                            itensVenda.length
+                                                                        ) {
+                                                                            finalizarVenda();
+                                                                        }
+                                                                    }
+                                                                );
+                                                            }
+                                                        );
+                                                    }
+
+                                                    function finalizarVenda() {
+
+                                                        const status =
+                                                            pagamentoInicial >= total
+                                                                ? 'CONCLUIDO'
+                                                                : 'ABERTA';
+
+                                                        connection.query(
+                                                            `UPDATE venda
+                                                             SET status = ?
+                                                             WHERE id_venda = ?`,
+                                                            [
+                                                                status,
+                                                                idVenda
+                                                            ],
+                                                            (err) => {
+
+                                                                if (err) {
+                                                                    return erroItem(
+                                                                        'Erro ao atualizar status da venda'
+                                                                    );
+                                                                }
+
+                                                                if (
+                                                                    pagamentoInicial <= 0
+                                                                ) {
+                                                                    return finalizar();
+                                                                }
+
+                                                                connection.query(
+                                                                    `INSERT INTO pagamento
+                                                                    (
+                                                                        id_venda,
+                                                                        forma,
+                                                                        valor,
+                                                                        status
+                                                                    )
+                                                                    VALUES (?, ?, ?, 'CONCLUIDO')`,
+                                                                    [
+                                                                        idVenda,
+                                                                        forma,
+                                                                        pagamentoInicial
+                                                                    ],
+                                                                    (err) => {
+
+                                                                        if (err) {
+                                                                            return erroItem(
+                                                                                'Erro ao registrar pagamento'
+                                                                            );
+                                                                        }
+
+                                                                        connection.query(
+                                                                            `UPDATE conta ct
+                                                                             INNER JOIN loja l
+                                                                                 ON l.id_conta = ct.id_conta
+                                                                             SET ct.saldo =
+                                                                                 ct.saldo + ?
+                                                                             WHERE l.id_loja = ?`,
+                                                                            [
+                                                                                pagamentoInicial,
+                                                                                idLoja
+                                                                            ],
+                                                                            (err) => {
+
+                                                                                if (err) {
+                                                                                    return erroItem(
+                                                                                        'Erro ao atualizar saldo da loja'
+                                                                                    );
+                                                                                }
+
+                                                                                finalizar();
+                                                                            }
+                                                                        );
+                                                                    }
+                                                                );
+                                                            }
+                                                        );
+                                                    }
+
+                                                    function finalizar() {
+
+                                                        connection.commit(
+                                                            (err) => {
+
+                                                                if (err) {
+                                                                    return connection.rollback(() => {
+                                                                        res.status(500).json({
+                                                                            erro:
+                                                                                'Erro ao finalizar venda'
+                                                                        });
+                                                                    });
+                                                                }
+
+                                                                res.status(201).json({
+                                                                    id:
+                                                                        idVenda,
+                                                                    id_venda:
+                                                                        idVenda,
+                                                                    total,
+                                                                    status:
+                                                                        pagamentoInicial >= total
+                                                                            ? 'CONCLUIDO'
+                                                                            : 'ABERTA',
+                                                                    mensagem:
+                                                                        'Venda realizada com sucesso'
+                                                                });
+                                                            }
+                                                        );
+                                                    }
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
                         }
                     );
                 }
@@ -1412,37 +2293,61 @@ app.post(
 app.get(
     '/api/vendas/abertas',
     autenticar,
-    permitir('ADMIN', 'OPERADOR'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const sql = `
             SELECT
                 v.id_venda AS id,
                 c.nome AS cliente,
                 v.valor_total AS total,
-                COALESCE(SUM(p.valor), 0) AS pago,
-                v.valor_total - COALESCE(SUM(p.valor), 0) AS restante
+                COALESCE(
+                    SUM(p.valor),
+                    0
+                ) AS pago,
+                GREATEST(
+                    v.valor_total -
+                    COALESCE(
+                        SUM(p.valor),
+                        0
+                    ),
+                    0
+                ) AS restante
             FROM venda v
-            LEFT JOIN cliente c
+
+            INNER JOIN cliente c
                 ON c.id_cliente = v.id_cliente
+
             LEFT JOIN pagamento p
                 ON p.id_venda = v.id_venda
+
             WHERE v.status = 'ABERTA'
+
             GROUP BY
                 v.id_venda,
                 c.nome,
                 v.valor_total
+
             ORDER BY v.id_venda DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar pendências'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar pendências'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
@@ -1454,8 +2359,12 @@ app.get(
 app.get(
     '/api/pagamentos',
     autenticar,
-    permitir('ADMIN', 'OPERADOR'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const sql = `
             SELECT
                 p.id_pagamento AS id,
@@ -1468,106 +2377,280 @@ app.get(
             ORDER BY p.id_pagamento DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar pagamentos'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar pagamentos'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
 app.post(
     '/api/pagamentos',
     autenticar,
-    permitir('ADMIN', 'OPERADOR'),
+    permitir(
+        'ADMIN',
+        'OPERADOR'
+    ),
     (req, res) => {
+
         const {
             venda,
             forma,
             valor
         } = req.body;
 
-        if (!venda || !forma || valor === undefined) {
+        const formasValidas = [
+            'PIX',
+            'Cartão',
+            'Boleto'
+        ];
+
+        const idVenda =
+            Number(venda);
+
+        const valorPagamento =
+            Number(valor);
+
+        if (
+            !idVenda ||
+            !forma ||
+            valor === undefined
+        ) {
             return res.status(400).json({
-                erro: 'Preencha os campos obrigatórios'
+                erro:
+                    'Preencha os campos obrigatórios'
             });
         }
 
-        connection.query(
-            `SELECT
-                valor_total,
-                COALESCE(
-                    (SELECT SUM(valor)
-                     FROM pagamento
-                     WHERE id_venda = ?),
-                    0
-                ) AS pago
-             FROM venda
-             WHERE id_venda = ?`,
-            [venda, venda],
-            (err, results) => {
-                if (err || !results.length) {
-                    return res.status(400).json({
-                        erro: 'Venda não encontrada'
-                    });
-                }
+        if (
+            !formasValidas.includes(forma)
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Forma de pagamento inválida'
+            });
+        }
 
-                const total = Number(results[0].valor_total);
-                const pagoAtual = Number(results[0].pago);
-                const valorPagamento = Number(valor);
+        if (
+            Number.isNaN(valorPagamento) ||
+            valorPagamento <= 0
+        ) {
+            return res.status(400).json({
+                erro:
+                    'Valor do pagamento inválido'
+            });
+        }
 
-                if (valorPagamento <= 0) {
-                    return res.status(400).json({
-                        erro: 'Valor do pagamento inválido'
-                    });
-                }
+        connection.beginTransaction((err) => {
 
-                if (pagoAtual + valorPagamento > total) {
-                    return res.status(400).json({
-                        erro: 'O pagamento não pode ser maior que o valor restante'
-                    });
-                }
+            if (err) {
+                return res.status(500).json({
+                    erro:
+                        'Erro ao iniciar pagamento'
+                });
+            }
 
-                connection.query(
-                    `INSERT INTO pagamento
-                    (id_venda, forma, valor, status)
-                    VALUES (?, ?, ?, 'CONCLUIDO')`,
-                    [
-                        venda,
-                        forma,
-                        valorPagamento
-                    ],
-                    (err, result) => {
-                        if (err) {
-                            return res.status(400).json({
-                                erro: 'Erro ao cadastrar pagamento'
+            connection.query(
+                `SELECT
+                    v.id_venda,
+                    v.valor_total,
+                    v.status,
+                    v.id_loja,
+                    COALESCE(
+                        SUM(p.valor),
+                        0
+                    ) AS pago
+                 FROM venda v
+                 LEFT JOIN pagamento p
+                    ON p.id_venda = v.id_venda
+                 WHERE v.id_venda = ?
+                 GROUP BY
+                    v.id_venda,
+                    v.valor_total,
+                    v.status,
+                    v.id_loja
+                 FOR UPDATE`,
+                [idVenda],
+                (err, results) => {
+
+                    if (err) {
+                        return connection.rollback(() => {
+                            res.status(500).json({
+                                erro:
+                                    'Erro ao consultar venda'
                             });
-                        }
-
-                        const novoPago = pagoAtual + valorPagamento;
-
-                        if (novoPago >= total) {
-                            connection.query(
-                                `UPDATE venda
-                                 SET status = 'CONCLUIDO'
-                                 WHERE id_venda = ?`,
-                                [venda],
-                                () => {}
-                            );
-                        }
-
-                        res.status(201).json({
-                            id_pagamento: result.insertId,
-                            mensagem: 'Pagamento registrado com sucesso'
                         });
                     }
-                );
-            }
-        );
+
+                    if (!results.length) {
+                        return connection.rollback(() => {
+                            res.status(404).json({
+                                erro:
+                                    'Venda não encontrada'
+                            });
+                        });
+                    }
+
+                    const dados = results[0];
+
+                    const total =
+                        Number(
+                            dados.valor_total
+                        );
+
+                    const pagoAtual =
+                        Number(
+                            dados.pago
+                        );
+
+                    const restante =
+                        total - pagoAtual;
+
+                    if (
+                        dados.status ===
+                        'CONCLUIDO'
+                    ) {
+                        return connection.rollback(() => {
+                            res.status(400).json({
+                                erro:
+                                    'Esta venda já está quitada'
+                            });
+                        });
+                    }
+
+                    if (
+                        valorPagamento >
+                        restante
+                    ) {
+                        return connection.rollback(() => {
+                            res.status(400).json({
+                                erro:
+                                    'O pagamento não pode ser maior que o valor restante'
+                            });
+                        });
+                    }
+
+                    connection.query(
+                        `INSERT INTO pagamento
+                        (
+                            id_venda,
+                            forma,
+                            valor,
+                            status
+                        )
+                        VALUES (?, ?, ?, 'CONCLUIDO')`,
+                        [
+                            idVenda,
+                            forma,
+                            valorPagamento
+                        ],
+                        (err, result) => {
+
+                            if (err) {
+                                return connection.rollback(() => {
+                                    res.status(500).json({
+                                        erro:
+                                            'Erro ao cadastrar pagamento'
+                                    });
+                                });
+                            }
+
+                            const novoPago =
+                                pagoAtual +
+                                valorPagamento;
+
+                            const novoStatus =
+                                novoPago >= total
+                                    ? 'CONCLUIDO'
+                                    : 'ABERTA';
+
+                            connection.query(
+                                `UPDATE venda
+                                 SET status = ?
+                                 WHERE id_venda = ?`,
+                                [
+                                    novoStatus,
+                                    idVenda
+                                ],
+                                (err) => {
+
+                                    if (err) {
+                                        return connection.rollback(() => {
+                                            res.status(500).json({
+                                                erro:
+                                                    'Erro ao atualizar venda'
+                                            });
+                                        });
+                                    }
+
+                                    connection.query(
+                                        `UPDATE conta ct
+                                         INNER JOIN loja l
+                                             ON l.id_conta = ct.id_conta
+                                         SET ct.saldo =
+                                             ct.saldo + ?
+                                         WHERE l.id_loja = ?`,
+                                        [
+                                            valorPagamento,
+                                            dados.id_loja
+                                        ],
+                                        (err) => {
+
+                                            if (err) {
+                                                return connection.rollback(() => {
+                                                    res.status(500).json({
+                                                        erro:
+                                                            'Erro ao atualizar saldo da loja'
+                                                    });
+                                                });
+                                            }
+
+                                            connection.commit(
+                                                (err) => {
+
+                                                    if (err) {
+                                                        return connection.rollback(() => {
+                                                            res.status(500).json({
+                                                                erro:
+                                                                    'Erro ao finalizar pagamento'
+                                                            });
+                                                        });
+                                                    }
+
+                                                    res.status(201).json({
+                                                        id_pagamento:
+                                                            result.insertId,
+                                                        status:
+                                                            novoStatus,
+                                                        restante:
+                                                            Math.max(
+                                                                total - novoPago,
+                                                                0
+                                                            ),
+                                                        mensagem:
+                                                            'Pagamento registrado com sucesso'
+                                                    });
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                }
+            );
+        });
     }
 );
 
@@ -1580,29 +2663,51 @@ app.get(
     '/api/clientes/:id/extrato',
     autenticar,
     (req, res) => {
-        const idCliente =
-            req.params.id === 'me'
-                ? req.usuario.id_cliente
-                : Number(req.params.id);
+
+        let idCliente;
+
+        if (req.params.id === 'me') {
+            idCliente = Number(
+                req.usuario.id_cliente
+            );
+        } else {
+            idCliente =
+                Number(req.params.id);
+        }
 
         if (!idCliente) {
             return res.status(400).json({
-                erro: 'Cliente inválido'
+                erro:
+                    'Cliente inválido'
             });
         }
 
         if (
             req.usuario.perfil === 'CLIENTE' &&
-            Number(req.usuario.id_cliente) !== Number(idCliente)
+            Number(req.usuario.id_cliente) !==
+            idCliente
         ) {
             return res.status(403).json({
-                erro: 'Você só pode consultar seu próprio extrato'
+                erro:
+                    'Você só pode consultar seu próprio extrato'
+            });
+        }
+
+        if (
+            req.usuario.perfil !== 'CLIENTE' &&
+            req.usuario.perfil !== 'ADMIN' &&
+            req.usuario.perfil !== 'OPERADOR'
+        ) {
+            return res.status(403).json({
+                erro:
+                    'Você não tem permissão para consultar este extrato'
             });
         }
 
         const sqlConta = `
             SELECT
                 c.id_cliente,
+                c.nome,
                 ct.numero,
                 ct.saldo
             FROM cliente c
@@ -1615,9 +2720,18 @@ app.get(
             sqlConta,
             [idCliente],
             (err, conta) => {
-                if (err || !conta.length) {
+
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar conta'
+                    });
+                }
+
+                if (!conta.length) {
                     return res.status(404).json({
-                        erro: 'Cliente não encontrado'
+                        erro:
+                            'Cliente não encontrado'
                     });
                 }
 
@@ -1627,20 +2741,28 @@ app.get(
                         v.data,
                         l.nome AS loja,
                         v.valor_total AS total,
-                        COALESCE(SUM(p.valor), 0) AS pago,
+                        COALESCE(
+                            SUM(p.valor),
+                            0
+                        ) AS pago,
                         v.status
                     FROM venda v
+
                     LEFT JOIN loja l
                         ON l.id_loja = v.id_loja
+
                     LEFT JOIN pagamento p
                         ON p.id_venda = v.id_venda
+
                     WHERE v.id_cliente = ?
+
                     GROUP BY
                         v.id_venda,
                         v.data,
                         l.nome,
                         v.valor_total,
                         v.status
+
                     ORDER BY v.data DESC
                 `;
 
@@ -1648,16 +2770,20 @@ app.get(
                     sqlVendas,
                     [idCliente],
                     (err, vendas) => {
+
                         if (err) {
                             return res.status(500).json({
-                                erro: 'Erro ao buscar extrato'
+                                erro:
+                                    'Erro ao buscar extrato'
                             });
                         }
 
                         res.json({
                             conta: {
-                                numero: conta[0].numero,
-                                saldo: conta[0].saldo
+                                numero:
+                                    conta[0].numero,
+                                saldo:
+                                    conta[0].saldo
                             },
                             vendas
                         });
@@ -1678,6 +2804,7 @@ app.get(
     autenticar,
     permitir('CLIENTE'),
     (req, res) => {
+
         const sql = `
             SELECT
                 v.id_venda,
@@ -1687,9 +2814,12 @@ app.get(
                 v.status,
                 l.nome AS loja
             FROM venda v
+
             LEFT JOIN loja l
                 ON l.id_loja = v.id_loja
+
             WHERE v.id_cliente = ?
+
             ORDER BY v.data DESC
         `;
 
@@ -1697,9 +2827,11 @@ app.get(
             sql,
             [req.usuario.id_cliente],
             (err, results) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao buscar suas compras'
+                        erro:
+                            'Erro ao buscar suas compras'
                     });
                 }
 
@@ -1719,34 +2851,55 @@ app.get(
     autenticar,
     permitir('ADMIN'),
     (req, res) => {
+
         const sql = `
             SELECT
                 c.id_conta AS id,
+
                 CASE
-                    WHEN cl.id_cliente IS NOT NULL THEN 'Cliente'
-                    WHEN l.id_loja IS NOT NULL THEN 'Loja'
+                    WHEN cl.id_cliente IS NOT NULL
+                        THEN 'Cliente'
+
+                    WHEN l.id_loja IS NOT NULL
+                        THEN 'Loja'
+
                     ELSE 'Conta'
                 END AS tipo,
-                COALESCE(cl.nome, l.nome, '-') AS nome,
+
+                COALESCE(
+                    cl.nome,
+                    l.nome,
+                    '-'
+                ) AS nome,
+
                 c.numero,
                 c.saldo
+
             FROM conta c
+
             LEFT JOIN cliente cl
                 ON cl.id_conta = c.id_conta
+
             LEFT JOIN loja l
                 ON l.id_conta = c.id_conta
+
             ORDER BY c.id_conta DESC
         `;
 
-        connection.query(sql, (err, results) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: 'Erro ao buscar contas'
-                });
-            }
+        connection.query(
+            sql,
+            (err, results) => {
 
-            res.json(results);
-        });
+                if (err) {
+                    return res.status(500).json({
+                        erro:
+                            'Erro ao buscar contas'
+                    });
+                }
+
+                res.json(results);
+            }
+        );
     }
 );
 
@@ -1760,97 +2913,164 @@ app.get(
     autenticar,
     permitir('ADMIN'),
     (req, res) => {
+
         const dados = {};
 
         connection.query(
             `SELECT
                 COUNT(*) AS vendas,
-                COALESCE(SUM(valor_total), 0) AS faturamento
+                COALESCE(
+                    SUM(valor_total),
+                    0
+                ) AS faturamento
              FROM venda`,
             (err, vendaResult) => {
+
                 if (err) {
                     return res.status(500).json({
-                        erro: 'Erro ao gerar relatório'
+                        erro:
+                            'Erro ao gerar relatório'
                     });
                 }
 
-                dados.vendas = Number(vendaResult[0].vendas);
-                dados.faturamento = Number(vendaResult[0].faturamento);
+                dados.vendas =
+                    Number(
+                        vendaResult[0].vendas
+                    );
+
+                dados.faturamento =
+                    Number(
+                        vendaResult[0].faturamento
+                    );
+
                 dados.ticket =
                     dados.vendas > 0
-                        ? dados.faturamento / dados.vendas
+                        ? dados.faturamento /
+                          dados.vendas
                         : 0;
 
                 connection.query(
                     `SELECT
-                        COALESCE(SUM(valor), 0) AS recebido
+                        COALESCE(
+                            SUM(valor),
+                            0
+                        ) AS recebido
                      FROM pagamento`,
                     (err, recebidoResult) => {
+
                         if (err) {
                             return res.status(500).json({
-                                erro: 'Erro ao gerar relatório'
+                                erro:
+                                    'Erro ao gerar relatório'
                             });
                         }
 
                         dados.recebido =
-                            Number(recebidoResult[0].recebido);
+                            Number(
+                                recebidoResult[0].recebido
+                            );
 
                         connection.query(
                             `SELECT
                                 p.nome,
-                                SUM(iv.quantidade) AS qtd,
-                                SUM(iv.quantidade * iv.preco_unitario) AS total
+                                SUM(
+                                    iv.quantidade
+                                ) AS qtd,
+                                SUM(
+                                    iv.quantidade *
+                                    iv.preco_unitario
+                                ) AS total
                              FROM item_venda iv
+
                              INNER JOIN produto p
-                                ON p.id_produto = iv.id_produto
-                             GROUP BY p.id_produto, p.nome
+                                ON p.id_produto =
+                                   iv.id_produto
+
+                             INNER JOIN venda v
+                                ON v.id_venda =
+                                   iv.id_venda
+
+                             GROUP BY
+                                p.id_produto,
+                                p.nome
+
                              ORDER BY qtd DESC
+
                              LIMIT 10`,
                             (err, topProdutos) => {
+
                                 if (err) {
                                     return res.status(500).json({
-                                        erro: 'Erro ao gerar relatório'
+                                        erro:
+                                            'Erro ao gerar relatório'
                                     });
                                 }
 
-                                dados.topProdutos = topProdutos;
+                                dados.topProdutos =
+                                    topProdutos;
 
                                 connection.query(
                                     `SELECT
                                         l.nome,
-                                        COUNT(v.id_venda) AS vendas,
-                                        COALESCE(SUM(v.valor_total), 0) AS total
+                                        COUNT(
+                                            v.id_venda
+                                        ) AS vendas,
+                                        COALESCE(
+                                            SUM(
+                                                v.valor_total
+                                            ),
+                                            0
+                                        ) AS total
                                      FROM venda v
+
                                      INNER JOIN loja l
-                                        ON l.id_loja = v.id_loja
-                                     GROUP BY l.id_loja, l.nome
+                                        ON l.id_loja =
+                                           v.id_loja
+
+                                     GROUP BY
+                                        l.id_loja,
+                                        l.nome
+
                                      ORDER BY total DESC`,
                                     (err, porLoja) => {
+
                                         if (err) {
                                             return res.status(500).json({
-                                                erro: 'Erro ao gerar relatório'
+                                                erro:
+                                                    'Erro ao gerar relatório'
                                             });
                                         }
 
-                                        dados.porLoja = porLoja;
+                                        dados.porLoja =
+                                            porLoja;
 
                                         connection.query(
                                             `SELECT
                                                 forma,
-                                                COALESCE(SUM(valor), 0) AS total
+                                                COALESCE(
+                                                    SUM(valor),
+                                                    0
+                                                ) AS total
                                              FROM pagamento
+
                                              GROUP BY forma
+
                                              ORDER BY total DESC`,
                                             (err, porForma) => {
+
                                                 if (err) {
                                                     return res.status(500).json({
-                                                        erro: 'Erro ao gerar relatório'
+                                                        erro:
+                                                            'Erro ao gerar relatório'
                                                     });
                                                 }
 
-                                                dados.porForma = porForma;
+                                                dados.porForma =
+                                                    porForma;
 
-                                                res.json(dados);
+                                                res.json(
+                                                    dados
+                                                );
                                             }
                                         );
                                     }
@@ -1866,9 +3086,25 @@ app.get(
 
 
 /* =========================
+   ERRO DE ROTA
+========================= */
+
+app.use('/api', (req, res) => {
+    res.status(404).json({
+        erro: 'Rota da API não encontrada'
+    });
+});
+
+
+/* =========================
    INICIAR SERVIDOR
 ========================= */
 
-app.listen(port, () => {
-    console.log(`Servidor rodando em http://localhost:${port}`);
-});
+app.listen(
+    port,
+    () => {
+        console.log(
+            `Servidor rodando em http://localhost:${port}`
+        );
+    }
+);
